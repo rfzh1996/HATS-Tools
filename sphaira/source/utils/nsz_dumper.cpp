@@ -240,7 +240,7 @@ Result NszExport(ui::ProgressBox* pbox, const NcaReaderCreator& nca_creator, s64
 
                         if (use_block) {
                             const auto flush_block = [&]() -> Result {
-                                R_UNLESS(ncz_block_index <= ncz_blocks.size(), Result_NszTooManyBlocks);
+                                R_UNLESS(ncz_block_index < ncz_blocks.size(), Result_NszTooManyBlocks);
                                 ncz_block_out_buffer.resize(ncz_block_in_buffer.size());
                                 const auto result = ZSTD_compress2(cctx, ncz_block_out_buffer.data(), ncz_block_out_buffer.size(), ncz_block_in_buffer.data(), ncz_block_in_buffer.size());
 
