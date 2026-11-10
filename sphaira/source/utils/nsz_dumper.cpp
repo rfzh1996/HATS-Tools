@@ -114,8 +114,6 @@ Result NszExport(ui::ProgressBox* pbox, const NcaReaderCreator& nca_creator, s64
         }
 
         if (should_compress) {
-            collection.name = collection.name.substr(0, collection.name.find_last_of('.')) + ".ncz";
-
             // todo: add this to nca.hpp
             keys::KeyEntry title_key;
             R_TRY(nca::GetDecryptedTitleKey(header, keys, title_key));
@@ -144,6 +142,31 @@ Result NszExport(ui::ProgressBox* pbox, const NcaReaderCreator& nca_creator, s64
             std::ranges::sort(ncz_sections, [](const auto& lhs, const auto& rhs) -> bool {
                 return lhs.offset < rhs.offset;
             });
+
+            // NCZ stores the NCA header at the original 0x4000-byte offset.
+            // NCAs with a gap before or between filesystem sections cannot be
+            // represented by the current section streaming layout, so preserve
+            // them as uncompressed NCA files instead of producing an invalid NSZ.
+            bool packed = !ncz_sections.empty() && ncz_sections.front().offset == NCZ_NORMAL_SIZE;
+            u64 expected_offset = NCZ_NORMAL_SIZE;
+            for (const auto& section : ncz_sections) {
+                if (section.offset != expected_offset) {
+                    packed = false;
+                    break;
+                }
+
+                expected_offset = section.offset + section.size;
+            }
+
+            if (!packed || expected_offset != collection.size) {
+                log_write("[NSZ] skipping non-packed NCA: %s\n", collection.name.c_str());
+                R_TRY(threaded_write(collection.name, source_off, file_off, collection.size));
+                collection.offset = collection_start_off;
+                collection.size = file_off - collection_start_off;
+                continue;
+            }
+
+            collection.name = collection.name.substr(0, collection.name.find_last_of('.')) + ".ncz";
 
             const u64 blockSize = 1UL << block_exponent;
             const u64 bytesToCompress = collection.size - NCZ_NORMAL_SIZE;
@@ -185,9 +208,9 @@ Result NszExport(ui::ProgressBox* pbox, const NcaReaderCreator& nca_creator, s64
             const auto ncz_blocks_off = ncz_block_header_off + ncz_block_header_size;
             const auto ncz_blocks_size = ncz_blocks.size() * sizeof(ncz::Block);
 
-            // read the first 0x4000 encypted, taking into account padding between first section.
+            // read the first 0x4000 encrypted bytes.
             s64 nca_off = 0;
-            const auto initial_data_size = std::max<u64>(NCZ_NORMAL_SIZE, ncz_sections[0].offset);
+            const auto initial_data_size = NCZ_NORMAL_SIZE;
 
             R_TRY(thread::Transfer(pbox, initial_data_size,
                 [&](void* data, s64 off, s64 size, u64* bytes_read) -> Result {
